@@ -43,7 +43,7 @@ import Control.Monad (when)
 
 import Dassh.Sanitize (applyTerminalState, isCompletionGarbage, sanitizePayload)
 import Dassh.Types (AppState (..), DasshEvent (..), EbpfEvent (..), SshSession (..))
-import Dassh.UI (drawUI)
+import Dassh.UI (dasshAttrMap, drawUI)
 
 -- | The core Brick application definition.
 dasshApp :: App AppState DasshEvent Int
@@ -53,7 +53,7 @@ dasshApp =
         , appChooseCursor = neverShowCursor
         , appHandleEvent = handleEvent
         , appStartEvent = return ()
-        , appAttrMap = const $ attrMap V.defAttr []
+        , appAttrMap = const dasshAttrMap
         }
 
 -- | Modifies the AppState purely based on standard and custom events.

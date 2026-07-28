@@ -32,15 +32,34 @@ This module defines the layout and styling of the UI. It dynamically
 renders a vertical grid of terminal panes or a full-screen detail view
 with scrollback based on the application state.
 -}
-module Dassh.UI (drawUI) where
+module Dassh.UI (drawUI, dasshAttrMap) where
 
 import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
 import Brick.Widgets.Center
 import Data.ByteString.Char8 qualified as BC
+import Graphics.Vty qualified as V
 
 import Dassh.Types (AppState (..), SshSession (..))
+
+selectedAttr, unselectedAttr, titleAttr :: AttrName
+selectedAttr = attrName "selected"
+unselectedAttr = attrName "unselected"
+titleAttr = attrName "title"
+
+{- | Global attribute map defining the color scheme for the dashboard.
+It applies Cyan to the currently focused session for instant visual feedback,
+and bold Yellow to the border titles.
+-}
+dasshAttrMap :: AttrMap
+dasshAttrMap =
+    attrMap
+        V.defAttr
+        [ (selectedAttr, fg V.cyan)
+        , (unselectedAttr, fg V.white)
+        , (titleAttr, fg V.yellow `V.withStyle` V.bold)
+        ]
 
 {- | Main rendering function consumed by Brick.
 The integer type parameter represents the resource name for viewports.
@@ -51,41 +70,55 @@ drawUI state
     | appExpanded state = [drawExpanded (appSessions state !! appSelectedIdx state)]
     | otherwise = [drawGrid state]
 
--- | Draws a vertical grid containing all actively monitored sessions.
+{- | Draws a vertical grid containing all actively monitored sessions.
+Applies the global border style and standard dashboard title.
+-}
 drawGrid :: AppState -> Widget Int
 drawGrid state =
     let sessions = appSessions state
         selected = appSelectedIdx state
         widgets = zipWith (drawPane selected) [0 ..] sessions
      in withBorderStyle unicode $
-            borderWithLabel (str " dassh - Active Sessions ") $
+            borderWithLabel (withAttr titleAttr $ str " dassh - Active Sessions ") $
                 vBox widgets
 
--- | Draws an individual preview pane for a specific session.
+{- | Draws an individual preview pane for a specific session.
+It dynamically alters its border style and color based on focus state.
+-}
 drawPane :: Int -> Int -> SshSession -> Widget Int
 drawPane selectedIdx currentIdx session =
     let isSelected = selectedIdx == currentIdx
         title = " PID: " ++ show (sessionPid session) ++ " (" ++ sessionTty session ++ ") "
-        bStyle = if isSelected then unicodeBold else unicode
-     in withBorderStyle bStyle $
-            borderWithLabel (str title) $
-                -- Show only the last 6 lines for the preview grid
-                let cleanText = BC.unpack $ sessionBuffer session
-                    preview = unlines . reverse . take 6 . reverse . lines $ cleanText
-                 in padAll 1 $ str preview
 
--- | Draws the selected session in full-screen with a scrollable viewport.
+        -- Determine visual distinction based on focus
+        bStyle = if isSelected then unicodeBold else unicode
+        paneAttr = if isSelected then selectedAttr else unselectedAttr
+     in withAttr paneAttr $
+            withBorderStyle bStyle $
+                borderWithLabel (withAttr titleAttr $ str title) $
+                    -- `padRight Max` acts as a greedy layout constraint.
+                    -- It immediately forces every pane to consume 100%
+                    -- of the horizontal terminal width, eliminating
+                    -- staggering borders.
+                    padAll 1 $
+                        padRight Max $
+                            let cleanText = BC.unpack $ sessionBuffer session
+                                preview = unlines . reverse . take 6 . reverse . lines $ cleanText
+                             in str preview
+
+{- | Draws the selected session in full-screen with a scrollable viewport.
+Forces the viewport to occupy 100% of both horizontal and vertical space.
+-}
 drawExpanded :: SshSession -> Widget Int
 drawExpanded session =
     let title = " [EXPANDED] PID: " ++ show (sessionPid session) ++ " (" ++ sessionTty session ++ ") "
         cleanText = BC.unpack $ sessionBuffer session
-     in withBorderStyle unicodeBold $
-            borderWithLabel (str title) $
-                -- Use the session's PID as the unique Resource Name for
-                -- the viewport. We use 'Both' axes instead of just
-                -- 'Vertical' to constrain the text horizontally; otherwise,
-                -- long strings will stretch the widget and push the
-                -- right-hand border off the screen.
-                viewport (sessionPid session) Both $
-                    padAll 1 $
-                        str cleanText
+     in withAttr selectedAttr $
+            withBorderStyle unicodeBold $
+                borderWithLabel (withAttr titleAttr $ str title) $
+                    -- Constrain the viewport on Both axes, and use greedy
+                    -- padding (Max) on the content to push the borders
+                    -- to the absolute edges of the terminal.
+                    viewport (sessionPid session) Both $
+                        padAll 1 $
+                            str cleanText
