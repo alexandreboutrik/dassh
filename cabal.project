@@ -1,0 +1,4 @@
+-- cabal.project
+-- Minimal project configuration for dassh.
+
+packages: .

@@ -1,0 +1,58 @@
+# Haskell / Cabal Artifacts
+dist-newstyle/
+dist/
+.ghc.environment.*
+cabal.project.local
+cabal.project.local~
+*.hi
+*.hi-boot
+*.o-boot
+*.dyn_hi
+*.dyn_o
+
+# C / eBPF Compiled Artifacts
+# Ignore all standard object files and LLVM bitcode
+*.o
+*.ll
+*.bc
+*.elf
+# Explicitly ignore the compiled eBPF bytecode object in the bpf/ directory
+bpf/dassh.bpf.o
+
+# Executables
+dassh
+*.exe
+
+# Nix / Direnv Environments
+result
+result-*
+.direnv/
+.envrc.cache
+compile_flags.txt
+
+# Language Servers / IDEs / Tooling
+# Haskell Language Server (HLS)
+.hie/
+hie.yaml
+
+# C/C++ Language Server (clangd)
+.clangd/
+compile_commands.json
+.cache/
+
+# General Editor Configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+tags
+TAGS
+
+# OS / System Artifacts
+.DS_Store
+Thumbs.db
+
+# Local drafts
+draft/

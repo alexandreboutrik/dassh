@@ -1,0 +1,53 @@
+cabal-version:      3.0
+name:               dassh
+version:            0.1.0.0
+synopsis:           Live SSH monitoring dashboard
+description:        A real-time dashboard to monitor SSH sessions.
+license:            LicenseRef-Proprietary
+license-file:       LICENSE
+author:             Alexandre Boutrik
+maintainer:         alexandreboutrik@protonmail.ch
+category:           System
+build-type:         Simple
+
+common warnings
+    ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+library
+    import:           warnings
+    exposed-modules:  Dassh.Types
+                      Dassh.Discovery
+                      Dassh.Ebpf
+                      Dassh.Sanitize
+                      Dassh.UI
+                      Dassh.App
+    build-depends:    base >=4.14 && <5
+                    , bytestring
+                    , brick
+                    , vty
+                    , unix
+                    , optparse-applicative
+                    , directory
+                    , filepath
+                    , vty
+                    , vty-crossplatform
+    hs-source-dirs:   src
+    default-language: GHC2021
+
+executable dassh
+    import:           warnings
+    main-is:          Main.hs
+    build-depends:    base >=4.14 && <5
+                    , dassh
+                    , unix
+                    , optparse-applicative
+                    , bytestring
+                    , brick
+                    , vty
+                    , vty-crossplatform
+    hs-source-dirs:   app
+    default-language: GHC2021
+    c-sources:        bpf/loader.c
+    include-dirs:     bpf
+    extra-libraries:  bpf, elf, z
+    ghc-options:      -threaded -rtsopts -with-rtsopts=-N

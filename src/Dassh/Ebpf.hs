@@ -1,0 +1,136 @@
+-- SPDX-License-Identifier: LicenseRef-Proprietary
+--
+-- Copyright (c) 2026 Alexandre Boutrik. All Rights Reserved.
+--
+-- CONFIDENTIAL AND PROPRIETARY.
+--
+-- The intellectual and technical concepts contained herein are proprietary
+-- to Alexandre Boutrik and are protected by trade secret, copyright and
+-- patent law. Dissemination of this information or reproduction of this
+-- material is strictly forbidden unless prior written permission is obtained.
+--
+-- Unauthorized access, use, reproduction, or distribution of this file is
+-- strictly prohibited.
+--
+-- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER "AS IS" AND ANY EXPRESS
+-- OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+-- WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+-- NON-INFRINGEMENT ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE
+-- LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+-- CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+-- SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+-- INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+-- CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+-- ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+-- POSSIBILITY OF SUCH DAMAGE.
+
+{- |
+Module      : Dassh.Ebpf
+Description : Haskell FFI bindings and ring buffer polling logic.
+
+This module acts as the bridge between the Haskell runtime and the
+low-level libbpf C shim. It exposes safe, high-level monadic functions
+to initialize the eBPF kernel program, clean up resources, and spawn a
+background green thread to asynchronously poll the eBPF ring buffer for
+captured terminal events.
+-}
+module Dassh.Ebpf (
+    initEbpf,
+    cleanupEbpf,
+    startPollingThread,
+    trackPid,
+) where
+
+import Control.Concurrent (ThreadId, forkIO)
+import Control.Monad (forever, void)
+import Foreign.C.Types (CInt (..), CUInt (..))
+import Foreign.Ptr (FunPtr, Ptr)
+import Foreign.Storable (peek)
+
+import Dassh.Types (EbpfEvent (..))
+
+-- -----------------------------------------------------------------------------
+-- Foreign Function Interface (FFI) Imports
+-- These match the definitions in bpf/loader.h
+-- -----------------------------------------------------------------------------
+
+foreign import ccall "dassh_bpf_init"
+    c_dassh_bpf_init :: IO CInt
+
+foreign import ccall "dassh_bpf_cleanup"
+    c_dassh_bpf_cleanup :: IO ()
+
+foreign import ccall "dassh_bpf_poll"
+    c_dassh_bpf_poll :: FunPtr (Ptr EbpfEvent -> IO ()) -> CInt -> IO CInt
+
+foreign import ccall "dassh_track_pid"
+    c_dassh_track_pid :: CUInt -> IO CInt
+
+{- |
+A standard FFI wrapper that dynamically converts a Haskell closure into a
+raw C function pointer. This allows the libbpf C shim to invoke Haskell
+code every time a ring buffer event fires.
+-}
+foreign import ccall "wrapper"
+    mkEventCallback :: (Ptr EbpfEvent -> IO ()) -> IO (FunPtr (Ptr EbpfEvent -> IO ()))
+
+-- -----------------------------------------------------------------------------
+-- High-Level Haskell API
+-- -----------------------------------------------------------------------------
+
+{- |
+Loads the compiled eBPF bytecode into the Linux kernel and attaches all
+tracepoints. Throws a runtime error if the underlying C shim fails
+(typically due to a lack of CAP_BPF/CAP_SYS_ADMIN privileges).
+-}
+initEbpf :: IO ()
+initEbpf = do
+    result <- c_dassh_bpf_init
+    if result == 0
+        then return ()
+        else error "Failed to initialize eBPF program. Check permissions or libbpf logs."
+
+{- |
+Detaches the eBPF program, closes the ring buffer, and cleans up kernel
+memory. Safely called during application shutdown.
+-}
+cleanupEbpf :: IO ()
+cleanupEbpf = c_dassh_bpf_cleanup
+
+{- |
+Internal helper that bridges the raw C callback to the pure Haskell world.
+It uses the 'Storable' typeclass to 'peek' into memory, extracting the
+C struct into a safe Haskell 'EbpfEvent', and then passes it to the
+user-provided handler.
+-}
+handleForeignEvent :: (EbpfEvent -> IO ()) -> Ptr EbpfEvent -> IO ()
+handleForeignEvent userCallback ptr = do
+    event <- peek ptr
+    userCallback event
+
+{- |
+Spawns a background Haskell green thread that continuously polls the
+kernel's eBPF ring buffer without blocking the main UI thread.
+
+The provided callback function will be executed asynchronously every
+time a new chunk of terminal data is intercepted by the kernel tracepoint.
+-}
+startPollingThread :: (EbpfEvent -> IO ()) -> IO ThreadId
+startPollingThread userCallback = do
+    -- Wrap our Haskell handler into a C function pointer
+    cCallback <- mkEventCallback (handleForeignEvent userCallback)
+
+    -- Fork the polling loop into a separate lightweight green thread.
+    -- The C-polling timeout is set to 100ms to ensure the thread remains
+    -- responsive to kill signals during application shutdown.
+    forkIO $ forever $ do
+        void $ c_dassh_bpf_poll cCallback 100
+
+{- |
+Registers a Root Process ID (like a user's initial Bash login shell) with
+the kernel. The eBPF program uses this map to track child processes and
+filter out irrelevant system noise, capturing only data generated by these
+specific SSH sessions.
+-}
+trackPid :: Int -> IO ()
+trackPid pid = void $ c_dassh_track_pid (fromIntegral pid)
