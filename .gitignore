@@ -18,6 +18,7 @@ cabal.project.local~
 *.elf
 # Explicitly ignore the compiled eBPF bytecode object in the bpf/ directory
 bpf/dassh.bpf.o
+bpf/bytecode.h
 
 # Executables
 dassh

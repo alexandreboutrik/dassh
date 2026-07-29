@@ -11,6 +11,7 @@ pkgs.mkShell {
     haskell-language-server
     hlint
 	shfmt
+	upx
 
     # C/eBPF Compilers and Tools
     bpftools
