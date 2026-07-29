@@ -1,5 +1,10 @@
 # dassh
 
+<!--
+![Version](https://img.shields.io/github/v/tag/alexandreboutrik/dassh?label=Version&color=blue)
+![CI](https://img.shields.io/github/actions/workflow/status/alexandreboutrik/dassh/tests.yml?label=CI&logo=github)
+-->
+
 `dassh` is a live SSH monitoring dashboard that watches user commands and program output across multiple SSH sessions in a real-time terminal interface.
 
 ## Architecture Overview
@@ -12,17 +17,25 @@ A dedicated Haskell worker thread continually polls this ring buffer from user s
 
 ## Installation
 
-Ensure GHC and Cabal are installed and available on your system.
+Execute the script to check if the dependencies are available on your system :
+
+```bash
+./scripts/checkdeps.sh
+```
 
 Then clone and build the repository :
 
 ```bash
 git clone git@github.com:alexandreboutrik/dassh
 cd dassh
+
+# If using NixOS, load the shell first
+nix-shell
+
 make all
 ```
 
-To install :
+After a successful build, you can also copy the executable to a directory on your `$PATH`:
 
 ```bash
 sudo install -m 755 "$(cabal list-bin dassh)" /usr/local/bin/dassh
@@ -30,11 +43,13 @@ sudo install -m 755 "$(cabal list-bin dassh)" /usr/local/bin/dassh
 
 ## Usage
 
-Launch the dashboard :
+From within the project directory, to launch the dashboard :
 
 ```bash
 make exec
 ```
+
+The dashboard automatically discovers active SSH sessions and opens a live view for each.
 
 Press `Tab` to move focus between session windows.  
 Press `Enter` on a selected session to expand it into a full-screen detail view with scrollback of all captured lines.  
