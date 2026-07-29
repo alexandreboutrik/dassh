@@ -110,45 +110,62 @@ cycleFocus state
 toggleExpanded :: AppState -> AppState
 toggleExpanded state = state {appExpanded = not (appExpanded state)}
 
+{- | Line-buffers stdout pipes to prevent chunk fragmentation.
+Filters out internal Bash autocomplete garbage on complete lines only.
+Returns the filtered complete lines and the remaining uncompleted fragment.
+-}
+processLineBufferedOutput :: BS.ByteString -> BS.ByteString -> (BS.ByteString, BS.ByteString)
+processLineBufferedOutput currentStaging newData =
+    let combined = BS.append currentStaging newData
+        (ready, rest) = BS.breakEnd (== 10) combined
+
+        -- Split on newline, filter out garbage, and re-join the lines
+        filteredLines =
+            BS.intercalate (BS.pack [10])
+                . filter (not . isCompletionGarbage)
+                $ BC.split '\n' ready
+     in (filteredLines, rest)
+
+-- | Maximum size of the terminal scrollback buffer in bytes (16KB).
+maxScrollbackSize :: Int
+maxScrollbackSize = 16384
+
+{- | Pure helper to trim the session buffer and prevent infinite
+memory growth.
+-}
+trimBuffer :: BS.ByteString -> BS.ByteString
+trimBuffer buf
+    | BS.length buf > maxScrollbackSize = BS.drop (BS.length buf - maxScrollbackSize) buf
+    | otherwise = buf
+
 {- | Appends the sanitized payload to the session buffer.
-If the payload originates from the Root Bash's internal pipe (fd 1), it is
-line-buffered in 'sessionStaging' to prevent chunk fragmentation before running
-the heuristic autocomplete filter. Terminal redraws (fd 2) pass through instantly.
+If the payload originates from the Root Bash's internal pipe (fd 1), it
+routes to 'processLineBufferedOutput' to handle fragmentation and filtering.
+Terminal redraws (fd 2) or child utilities bypass this and stream directly
+to the UI.
 -}
 updateSessionBuffer :: EbpfEvent -> AppState -> AppState
 updateSessionBuffer event state =
     let targetRootPid = fromIntegral (eventRootPid event)
-        actualPid = eventActualPid event
-        fd = eventFd event
+        isRootBashFd1 = (eventActualPid event == eventRootPid event) && (eventFd event == 1)
         safeData = sanitizePayload (eventPayload event)
 
         updateSession s
-            | sessionPid s == targetRootPid && not (BS.null safeData) =
-                let isRootBashFd1 = (actualPid == eventRootPid event) && (fd == 1)
-                    (newBuf, newCursor, newStaging) =
+            -- Guard clause: ignore if this session isn't the target or
+            -- if data is empty
+            | sessionPid s /= targetRootPid || BS.null safeData = s
+            | otherwise =
+                let (dataToRender, newStaging) =
                         if isRootBashFd1
-                            then
-                                -- Line-Buffer pipes to prevent chunk fragmentation
-                                let combined = BS.append (sessionStaging s) safeData
-                                    (ready, rest) = BS.breakEnd (== 10) combined
-                                    -- Filter garbage on complete lines only
-                                    linesToProcess =
-                                        BS.intercalate (BS.pack [10]) $
-                                            filter (not . isCompletionGarbage) $
-                                                BC.split '\n' ready
-                                    (b, c) = applyTerminalState (sessionBuffer s) (sessionCursor s) linesToProcess
-                                 in (b, c, rest)
-                            else
-                                -- Terminal redraws (fd 2) or child utilities stream directly
-                                let (b, c) = applyTerminalState (sessionBuffer s) (sessionCursor s) safeData
-                                 in (b, c, sessionStaging s)
+                            then processLineBufferedOutput (sessionStaging s) safeData
+                            else (safeData, sessionStaging s)
 
-                    trimmed =
-                        if BS.length newBuf > 16384
-                            then BS.drop (BS.length newBuf - 16384) newBuf
-                            else newBuf
-                 in s {sessionBuffer = trimmed, sessionCursor = newCursor, sessionStaging = newStaging}
-            | otherwise = s
+                    (newBuf, newCursor) = applyTerminalState (sessionBuffer s) (sessionCursor s) dataToRender
+                 in s
+                        { sessionBuffer = trimBuffer newBuf
+                        , sessionCursor = newCursor
+                        , sessionStaging = newStaging
+                        }
      in state {appSessions = map updateSession (appSessions state)}
 
 {- | Cleanly merges newly discovered sessions without erasing existing
