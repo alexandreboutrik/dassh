@@ -96,10 +96,10 @@ applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack ne
             spacesNeeded = 8 - (lineLen `mod` 8)
             spaces = BS.replicate spacesNeeded 32
          in go (pre `BS.append` spaces `BS.append` post) off xs
-    go b off (13 : 10 : xs) -- \r\n
+    go b _ (13 : 10 : xs) -- \r\n
         =
         go (BS.snoc b 10) 0 xs
-    go b off (13 : xs) -- \r (Isolated Carriage Return)
+    go b _ (13 : xs) -- \r (Isolated Carriage Return)
         =
         let currentLineLen = BS.length (snd $ BS.breakEnd (== 10) b)
          in go b currentLineLen xs

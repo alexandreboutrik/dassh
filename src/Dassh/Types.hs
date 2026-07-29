@@ -42,7 +42,7 @@ module Dassh.Types (
 
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
-import Foreign.C.Types (CInt (..), CUInt (..))
+import Foreign.C.Types (CUInt (..))
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable (..))
 
