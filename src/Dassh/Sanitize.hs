@@ -47,10 +47,12 @@ import Data.ByteString.Char8 qualified as BC
 import Data.Word (Word8)
 
 {- | Takes a raw payload from the C struct and drops unsupported/dangerous
-ANSI escape sequences before packing it into a strict ByteString.
+ANSI escape sequences before packing it back into a strict ByteString.
+We unpack the strict ByteString into a list here to leverage Haskell's
+powerful list pattern matching for the ANSI state machine.
 -}
-sanitizePayload :: [Word8] -> ByteString
-sanitizePayload = BS.pack . stripAnsi
+sanitizePayload :: ByteString -> ByteString
+sanitizePayload = BS.pack . stripAnsi . BS.unpack
 
 {- | Heuristic filter to identify and drop internal Bash tab-completion
  - pipe garbage.

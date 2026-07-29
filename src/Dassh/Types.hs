@@ -41,8 +41,10 @@ module Dassh.Types (
 ) where
 
 import Data.ByteString (ByteString)
+import Data.ByteString.Internal (create)
 import Data.Word (Word8)
 import Foreign.C.Types (CUInt (..))
+import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable (..))
 
@@ -106,7 +108,7 @@ data EbpfEvent = EbpfEvent
     -- ^ The actual PID of the process generating the event.
     , eventFd :: !CUInt
     -- ^ The File Descriptor (e.g., 1 for stdout, 2 for stderr).
-    , eventPayload :: ![Word8]
+    , eventPayload :: !ByteString
     -- ^ Raw byte stream captured from the kernel tracepoint.
     }
     deriving (Show, Eq)
@@ -130,7 +132,9 @@ instance Storable EbpfEvent where
         fd <- peek (castPtr (ptr `plusPtr` 8) :: Ptr CUInt)
 
         let payloadPtr = castPtr (ptr `plusPtr` 12) :: Ptr Word8
-        payload <- mapM (\i -> peekElemOff payloadPtr i) [0 .. payloadSize - 1]
+
+        payload <- create payloadSize $ \destPtr ->
+            copyBytes destPtr payloadPtr payloadSize
 
         return $ EbpfEvent rootPid actualPid fd payload
 
