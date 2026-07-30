@@ -1,9 +1,7 @@
 # dassh
 
-<!--
 ![Version](https://img.shields.io/github/v/tag/alexandreboutrik/dassh?label=Version&color=blue)
-![CI](https://img.shields.io/github/actions/workflow/status/alexandreboutrik/dassh/tests.yml?label=CI&logo=github)
--->
+<!--[CI](https://img.shields.io/github/actions/workflow/status/alexandreboutrik/dassh/tests.yml?label=CI&logo=github)-->
 
 `dassh` is a live SSH monitoring dashboard that watches user commands and program output across multiple SSH sessions in a real-time terminal interface.
 
@@ -71,6 +69,4 @@ If you discover a security vulnerability, please check out our [Security Policy]
 
 ## LICENSE
 
-This project is proprietary. All rights are reserved by the copyright holder. The intellectual and technical concepts contained in this codebase are protected by trade secret, copyright, and patent law. Unauthorized access, use, reproduction, or distribution is strictly prohibited. A permissive open-source license is planned for a future release.
-
-<!-- This project is licensed under the European Union Public License, Version 1.2 or later (EUPL-1.2). It is a copyleft license: you may use, modify, and distribute this software, but any derivative works must be released under the same license terms. See the [LICENSE](LICENSE) file for more information. -->
+This project is dual-licensed under copyleft terms. The Haskell userland code (`src/` and `app/` directories) is licensed under the [European Union Public License, Version 1.2](LICENSE) (EUPL-1.2). The C and eBPF code located in the `bpf/` directory is [GPL-2.0](bpf/LICENSE) compliant due to Linux kernel API requirements. You may freely use, modify, and distribute this software, provided that any derivative works are released under these exact same license terms. See the root [LICENSE](LICENSE) file and the [bpf/LICENSE](bpf/LICENSE) file for more information.

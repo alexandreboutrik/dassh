@@ -1,28 +1,19 @@
--- SPDX-License-Identifier: LicenseRef-Proprietary
+-- SPDX-License-Identifier: EUPL-1.2
 --
--- Copyright (c) 2026 Alexandre Boutrik. All Rights Reserved.
+-- Copyright 2026 Alexandre Boutrik
 --
--- CONFIDENTIAL AND PROPRIETARY.
+-- Licensed under the EUPL, Version 1.2 or - as soon they will be approved by
+-- the European Commission - subsequent versions of the EUPL (the "Licence");
+-- You may not use this work except in compliance with the Licence.
+-- You may obtain a copy of the Licence at:
 --
--- The intellectual and technical concepts contained herein are proprietary
--- to Alexandre Boutrik and are protected by trade secret, copyright and
--- patent law. Dissemination of this information or reproduction of this
--- material is strictly forbidden unless prior written permission is obtained.
+-- https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
 --
--- Unauthorized access, use, reproduction, or distribution of this file is
--- strictly prohibited.
---
--- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER "AS IS" AND ANY EXPRESS
--- OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
--- WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
--- NON-INFRINGEMENT ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE
--- LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
--- CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
--- SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
--- INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
--- CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
--- ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
--- POSSIBILITY OF SUCH DAMAGE.
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the Licence is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the Licence for the specific language governing permissions and
+-- limitations under the Licence.
 
 {- |
 Module      : Dassh.Ebpf

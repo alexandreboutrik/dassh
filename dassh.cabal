@@ -3,7 +3,7 @@ name:               dassh
 version:            0.1.0.0
 synopsis:           Live SSH monitoring dashboard
 description:        A real-time dashboard to monitor SSH sessions.
-license:            LicenseRef-Proprietary
+license:            EUPL-1.2
 license-file:       LICENSE
 author:             Alexandre Boutrik
 maintainer:         alexandreboutrik@protonmail.ch
