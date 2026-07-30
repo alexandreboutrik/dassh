@@ -15,21 +15,25 @@ A dedicated Haskell worker thread continually polls this ring buffer from user s
 
 ## Installation
 
-Execute the script to check if the dependencies are available on your system :
+First clone the repository:
 
-```bash
-./scripts/checkdeps.sh
 ```
-
-Then clone and build the repository :
-
-```bash
 git clone git@github.com:alexandreboutrik/dassh
 cd dassh
 
 # If using NixOS, load the shell first
 nix-shell
+```
 
+We recommend you to execute the `checkdeps` script to check if all the dependencies are indeed available on your system:
+
+```bash
+./scripts/checkdeps.sh
+```
+
+To build the application:
+
+```bash
 make all
 ```
 
