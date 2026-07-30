@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 -- SPDX-License-Identifier: LicenseRef-Proprietary
 --
 -- Copyright (c) 2026 Alexandre Boutrik. All Rights Reserved.
@@ -46,6 +48,88 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BC
 import Data.Word (Word8)
 
+-- | Standard ASCII Control Characters
+pattern AsciiNull :: Word8
+pattern AsciiNull = 0
+
+pattern AsciiBel :: Word8
+pattern AsciiBel = 7
+
+pattern AsciiBs :: Word8
+pattern AsciiBs = 8
+
+pattern AsciiTab :: Word8
+pattern AsciiTab = 9
+
+pattern AsciiLf :: Word8
+pattern AsciiLf = 10
+
+pattern AsciiCr :: Word8
+pattern AsciiCr = 13
+
+pattern AsciiEsc :: Word8
+pattern AsciiEsc = 27
+
+pattern AsciiSpace :: Word8
+pattern AsciiSpace = 32
+
+-- | ASCII characters used in ANSI escape parsing
+pattern CharZero :: Word8
+pattern CharZero = 48
+
+pattern CharNine :: Word8
+pattern CharNine = 57
+
+pattern CharAt :: Word8
+pattern CharAt = 64
+
+pattern CharC :: Word8
+pattern CharC = 67
+
+pattern CharD :: Word8
+pattern CharD = 68
+
+pattern CharK :: Word8
+pattern CharK = 75
+
+pattern CharP :: Word8
+pattern CharP = 80
+
+pattern AsciiBracketLeft :: Word8
+pattern AsciiBracketLeft = 91
+
+pattern AsciiBackslash :: Word8
+pattern AsciiBackslash = 92
+
+pattern AsciiBracketRight :: Word8
+pattern AsciiBracketRight = 93
+
+pattern AsciiTilde :: Word8
+pattern AsciiTilde = 126
+
+-- | Internal markers for 1D terminal emulation
+pattern InternalClearEol :: Word8
+pattern InternalClearEol = 11
+
+pattern InternalDeleteChar :: Word8
+pattern InternalDeleteChar = 12
+
+pattern InternalCursorRight :: Word8
+pattern InternalCursorRight = 14
+
+pattern InternalCursorLeft :: Word8
+pattern InternalCursorLeft = 15
+
+pattern InternalInsertSpace :: Word8
+pattern InternalInsertSpace = 16
+
+-- | UTF-8 boundaries for continuation bytes
+pattern Utf8ContStart :: Word8
+pattern Utf8ContStart = 128
+
+pattern Utf8ContEnd :: Word8
+pattern Utf8ContEnd = 191
+
 {- | Takes a raw payload from the C struct and drops unsupported/dangerous
 ANSI escape sequences before packing it back into a strict ByteString.
 We unpack the strict ByteString into a list here to leverage Haskell's
@@ -77,40 +161,40 @@ applyTerminalState :: ByteString -> Int -> ByteString -> (ByteString, Int)
 applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack newBytes)
   where
     go b off [] = (b, off)
-    go b off (8 : xs) = cursorLeft b off xs -- \b (Cursor Left)
-    go b off (15 : xs) = cursorLeft b off xs -- \ESC[D (Cursor Left)
-    go b off (14 : xs) = cursorRight b off xs -- \ESC[C (Cursor Right)
-    go b off (12 : xs) -- \ESC[<n>P (Delete Character)
+    go b off (AsciiBs : xs) = cursorLeft b off xs -- \b (Cursor Left)
+    go b off (InternalCursorLeft : xs) = cursorLeft b off xs -- \ESC[D (Cursor Left)
+    go b off (InternalCursorRight : xs) = cursorRight b off xs -- \ESC[C (Cursor Right)
+    go b off (InternalDeleteChar : xs) -- \ESC[<n>P (Delete Character)
         | off == 0 = go b off xs
         | otherwise =
             let (pre, post) = BS.splitAt (BS.length b - off) b
                 newB = pre `BS.append` dropFullChar post
              in go newB (max 0 (off - 1)) xs
-    go b off (16 : xs) -- \ESC[<n>@ (Insert blank space)
+    go b off (InternalInsertSpace : xs) -- \ESC[<n>@ (Insert blank space)
         =
         let (pre, post) = BS.splitAt (BS.length b - off) b
-            newB = BS.snoc pre 32 `BS.append` post
+            newB = BS.snoc pre AsciiSpace `BS.append` post
          in go newB (off + 1) xs
-    go b off (9 : xs) -- \t (Tab Expansion)
+    go b off (AsciiTab : xs) -- \t (Tab Expansion)
         =
         let (pre, post) = BS.splitAt (BS.length b - off) b
-            lineLen = BS.length (snd $ BS.breakEnd (== 10) pre)
+            lineLen = BS.length (snd $ BS.breakEnd (== AsciiLf) pre)
             spacesNeeded = 8 - (lineLen `mod` 8)
-            spaces = BS.replicate spacesNeeded 32
+            spaces = BS.replicate spacesNeeded AsciiSpace
          in go (pre `BS.append` spaces `BS.append` post) off xs
-    go b _ (13 : 10 : xs) -- \r\n
+    go b _ (AsciiCr : AsciiLf : xs) -- \r\n
         =
-        go (BS.snoc b 10) 0 xs
-    go b _ (13 : xs) -- \r (Isolated Carriage Return)
+        go (BS.snoc b AsciiLf) 0 xs
+    go b _ (AsciiCr : xs) -- \r (Isolated Carriage Return)
         =
-        let currentLineLen = BS.length (snd $ BS.breakEnd (== 10) b)
+        let currentLineLen = BS.length (snd $ BS.breakEnd (== AsciiLf) b)
          in go b currentLineLen xs
-    go b off (11 : xs) -- \ESC[K (Clear to end of line)
+    go b off (InternalClearEol : xs) -- \ESC[K (Clear to end of line)
         | off == 0 = go b off xs
         | otherwise = go (BS.take (BS.length b - off) b) 0 xs
     go b off (x : xs)
         | off == 0 = go (BS.snoc b x) 0 xs
-        | x >= 128 && x <= 191 -- UTF-8 continuation byte: always insert, never drop
+        | x >= Utf8ContStart && x <= Utf8ContEnd -- UTF-8 continuation byte: always insert, never drop
             =
             let (pre, post) = BS.splitAt (BS.length b - off) b
                 newB = BS.snoc pre x `BS.append` post
@@ -127,7 +211,7 @@ applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack ne
             then
                 let p' = BS.drop 1 p
                     skipCont p'' =
-                        if BS.length p'' > 0 && BS.head p'' >= 128 && BS.head p'' <= 191
+                        if BS.length p'' > 0 && BS.head p'' >= Utf8ContStart && BS.head p'' <= Utf8ContEnd
                             then skipCont (BS.drop 1 p'')
                             else p''
                  in skipCont p'
@@ -136,10 +220,10 @@ applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack ne
     -- Helper to safely move left without slicing UTF-8
     cursorLeft b off xs
         | BS.null b = go b off xs
-        | off < BS.length b && BS.index b (BS.length b - 1 - off) == 10 = go b off xs
+        | off < BS.length b && BS.index b (BS.length b - 1 - off) == AsciiLf = go b off xs
         | otherwise =
             let skipCont o =
-                    if o < BS.length b && BS.index b (BS.length b - 1 - o) >= 128 && BS.index b (BS.length b - 1 - o) <= 191
+                    if o < BS.length b && BS.index b (BS.length b - 1 - o) >= Utf8ContStart && BS.index b (BS.length b - 1 - o) <= Utf8ContEnd
                         then skipCont (o + 1)
                         else o
              in go b (skipCont (off + 1)) xs
@@ -149,7 +233,7 @@ applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack ne
         | off == 0 = go b off xs
         | otherwise =
             let skipCont o =
-                    if o > 0 && BS.index b (BS.length b - o) >= 128 && BS.index b (BS.length b - o) <= 191
+                    if o > 0 && BS.index b (BS.length b - o) >= Utf8ContStart && BS.index b (BS.length b - o) <= Utf8ContEnd
                         then skipCont (o - 1)
                         else o
              in go b (skipCont (off - 1)) xs
@@ -158,7 +242,7 @@ applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack ne
 parseAnsiParam :: [Word8] -> (Int, [Word8])
 parseAnsiParam xs = parse 0 xs
   where
-    parse acc (d : ds) | d >= 48 && d <= 57 = parse (acc * 10 + fromIntegral (d - 48)) ds
+    parse acc (d : ds) | d >= CharZero && d <= CharNine = parse (acc * 10 + fromIntegral (d - CharZero)) ds
     parse acc ds = (max 1 acc, ds)
 
 {- | A pure, recursive state machine that processes the incoming
@@ -172,21 +256,20 @@ terminal corruption.
 stripAnsi :: [Word8] -> [Word8]
 stripAnsi [] = []
 -- Stop processing as soon as we hit the C-string null terminator.
--- The eBPF struct payload is 256 bytes, mostly padded with 0s at the end.
-stripAnsi (0 : _) = []
--- Detect OSC (Operating System Command) sequence: ESC (27) followed by ']' (93)
-stripAnsi (27 : 93 : xs) = stripAnsi (dropOscBody xs)
-stripAnsi (27 : 91 : xs) =
+stripAnsi (AsciiNull : _) = []
+-- Detect OSC (Operating System Command) sequence
+stripAnsi (AsciiEsc : AsciiBracketRight : xs) = stripAnsi (dropOscBody xs)
+stripAnsi (AsciiEsc : AsciiBracketLeft : xs) =
     let (n, rest) = parseAnsiParam xs
      in case rest of
-            (67 : ys) -> replicate n 14 ++ stripAnsi ys -- \ESC[<n>C (Right)
-            (68 : ys) -> replicate n 15 ++ stripAnsi ys -- \ESC[<n>D (Left)
-            (80 : ys) -> replicate n 12 ++ stripAnsi ys -- \ESC[<n>P (Delete)
-            (64 : ys) -> replicate n 16 ++ stripAnsi ys -- \ESC[<n>@ (Insert)
-            (75 : ys) -> 11 : stripAnsi ys -- \ESC[<n>K (Clear EOL)
+            (CharC : ys) -> replicate n InternalCursorRight ++ stripAnsi ys -- \ESC[<n>C (Right)
+            (CharD : ys) -> replicate n InternalCursorLeft ++ stripAnsi ys -- \ESC[<n>D (Left)
+            (CharP : ys) -> replicate n InternalDeleteChar ++ stripAnsi ys -- \ESC[<n>P (Delete)
+            (CharAt : ys) -> replicate n InternalInsertSpace ++ stripAnsi ys -- \ESC[<n>@ (Insert)
+            (CharK : ys) -> InternalClearEol : stripAnsi ys -- \ESC[<n>K (Clear EOL)
             _ -> stripAnsi (dropAnsiBody xs)
 -- Catch isolated ESC bytes that might break rendering
-stripAnsi (27 : xs) = stripAnsi xs
+stripAnsi (AsciiEsc : xs) = stripAnsi xs
 -- Standard character processing
 stripAnsi (x : xs)
     | isSafePrintable x = x : stripAnsi xs
@@ -197,8 +280,8 @@ stripAnsi (x : xs)
 -}
 dropOscBody :: [Word8] -> [Word8]
 dropOscBody [] = []
-dropOscBody (7 : xs) = xs -- BEL terminator
-dropOscBody (27 : 92 : xs) = xs -- ESC \ terminator
+dropOscBody (AsciiBel : xs) = xs -- BEL terminator
+dropOscBody (AsciiEsc : AsciiBackslash : xs) = xs -- ESC \ terminator
 dropOscBody (_ : xs) = dropOscBody xs
 
 {- | Consumes bytes inside an ANSI escape sequence until the terminator
@@ -214,19 +297,20 @@ dropAnsiBody (x : xs)
 
 {- | Determines if a byte is safe to pass to the Brick UI state machine.
 Allows standard ASCII printables, UTF-8 extended bytes, and specific
-control characters mapped for our 1D cursor emulation:
-- 8  : Backspace
-- 9  : Tab Expansion
-- 10 : Newline
-- 11 : Internal Clear-Line (\ESC[K)
-- 12 : Internal Delete Char (\ESC[P)
-- 13 : Carriage Return
-- 14 : Internal Cursor Right (\ESC[C)
-- 15 : Internal Cursor Left (\ESC[D)
-- 16 : Internal Insert Space (\ESC[@)
+control characters mapped for our 1D cursor emulation.
 -}
 isSafePrintable :: Word8 -> Bool
 isSafePrintable x =
-    (x >= 32 && x <= 126)
-        || x >= 128
-        || x `elem` [8, 9, 10, 11, 12, 13, 14, 15, 16]
+    (x >= AsciiSpace && x <= AsciiTilde)
+        || x >= Utf8ContStart
+        || x
+            `elem` [ AsciiBs
+                   , AsciiTab
+                   , AsciiLf
+                   , InternalClearEol
+                   , InternalDeleteChar
+                   , AsciiCr
+                   , InternalCursorRight
+                   , InternalCursorLeft
+                   , InternalInsertSpace
+                   ]
