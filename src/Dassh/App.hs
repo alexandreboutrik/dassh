@@ -42,7 +42,7 @@ import Graphics.Vty qualified as V
 import Control.Monad (when)
 
 import Dassh.Sanitize (applyTerminalState, isCompletionGarbage, sanitizePayload)
-import Dassh.Types (AppState (..), DasshEvent (..), EbpfEvent (..), SshSession (..))
+import Dassh.Types (AppState (..), DasshEvent (..), EbpfEvent (..), SshSession (..), Zipper (..), zipperFromList, zipperMap, zipperNext, zipperToList)
 import Dassh.UI (dasshAttrMap, drawUI)
 
 -- | The core Brick application definition.
@@ -75,10 +75,12 @@ handleEvent (AppEvent (NewPayload event)) = do
     -- Trigger Auto-Scroll if the updated session is currently expanded
     state <- get
     let targetPid = fromIntegral (eventRootPid event)
-    when (appExpanded state && not (null (appSessions state))) $ do
-        let selectedPid = sessionPid (appSessions state !! appSelectedIdx state)
-        when (selectedPid == targetPid) $ do
-            vScrollToEnd (viewportScroll selectedPid)
+    case appSessions state of
+        Just z | appExpanded state -> do
+            let selectedPid = sessionPid (zFocus z)
+            when (selectedPid == targetPid) $ do
+                vScrollToEnd (viewportScroll selectedPid)
+        _ -> return ()
 handleEvent (AppEvent (RefreshSessions latest)) = modify (syncSessions latest)
 handleEvent _ = return ()
 
@@ -86,25 +88,25 @@ handleEvent _ = return ()
 scrollExpanded :: Int -> EventM Int AppState ()
 scrollExpanded amt = do
     state <- get
-    when (appExpanded state && not (null (appSessions state))) $ do
-        let pid = sessionPid (appSessions state !! appSelectedIdx state)
-        -- Fetch the viewport by PID and scroll it
-        vScrollBy (viewportScroll pid) amt
+    case appSessions state of
+        Just z | appExpanded state -> do
+            let pid = sessionPid (zFocus z)
+            vScrollBy (viewportScroll pid) amt
+        _ -> return ()
 
 -- | Helper to scroll the viewport by full pages
 scrollPageExpanded :: Direction -> EventM Int AppState ()
 scrollPageExpanded dir = do
     state <- get
-    when (appExpanded state && not (null (appSessions state))) $ do
-        let pid = sessionPid (appSessions state !! appSelectedIdx state)
-        -- Fetch the viewport by PID and scroll by a full page
-        vScrollPage (viewportScroll pid) dir
+    case appSessions state of
+        Just z | appExpanded state -> do
+            let pid = sessionPid (zFocus z)
+            vScrollPage (viewportScroll pid) dir
+        _ -> return ()
 
 -- | Moves the focus to the next pane in the dashboard.
 cycleFocus :: AppState -> AppState
-cycleFocus state
-    | null (appSessions state) = state
-    | otherwise = state {appSelectedIdx = (appSelectedIdx state + 1) `mod` length (appSessions state)}
+cycleFocus state = state {appSessions = fmap zipperNext (appSessions state)}
 
 -- | Toggles the full-screen view for the currently focused pane.
 toggleExpanded :: AppState -> AppState
@@ -171,7 +173,7 @@ updateSessionBuffer event state =
                         , sessionInTuiMode = newTuiMode
                         , sessionAnsiStaging = newAntiStaging
                         }
-     in state {appSessions = map updateSession (appSessions state)}
+     in state {appSessions = fmap (zipperMap updateSession) (appSessions state)}
 
 {- | Cleanly merges newly discovered sessions without erasing existing
  - output buffers.
@@ -180,23 +182,36 @@ out-of-bounds errors.
 -}
 syncSessions :: [SshSession] -> AppState -> AppState
 syncSessions latest state =
-    let current = appSessions state
+    let currentList = maybe [] zipperToList (appSessions state)
+        oldFocusedPid = fmap (sessionPid . zFocus) (appSessions state)
 
         -- Keep current sessions (preserving their buffers) if they are
         -- still active
-        stillActive = filter (\c -> any (\l -> sessionPid l == sessionPid c) latest) current
+        stillActive = filter (\c -> any (\l -> sessionPid l == sessionPid c) latest) currentList
 
         -- Find entirely new sessions that just logged in
-        isNew l = not $ any (\c -> sessionPid c == sessionPid l) current
+        isNew l = not $ any (\c -> sessionPid c == sessionPid l) currentList
         newSessions = filter isNew latest
 
-        merged = stillActive ++ newSessions
+        mergedList = stillActive ++ newSessions
 
-        -- Ensure selected index stays within bounds if users disconnect
-        safeIdx = if null merged then 0 else min (appSelectedIdx state) (length merged - 1)
-        safeExpanded = appExpanded state && not (null merged)
+        -- Reconstruct the zipper and attempt to restore previous focus
+        newZipper = case zipperFromList mergedList of
+            Nothing -> Nothing
+            Just z -> Just (restoreFocus oldFocusedPid z)
+
+        safeExpanded = appExpanded state && not (null mergedList)
      in state
-            { appSessions = merged
-            , appSelectedIdx = safeIdx
+            { appSessions = newZipper
             , appExpanded = safeExpanded
             }
+
+-- | Helper to restore focus to a specific PID after synchronization
+restoreFocus :: Maybe Int -> Zipper SshSession -> Zipper SshSession
+restoreFocus Nothing z = z
+restoreFocus (Just pid) z =
+    let lst = zipperToList z
+        (prev, rest) = break (\s -> sessionPid s == pid) lst
+     in case rest of
+            [] -> z -- PID not found (disconnected), fallback to the head
+            (f : next) -> Zipper (reverse prev) f next

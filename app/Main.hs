@@ -49,7 +49,7 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Dassh.App (dasshApp)
 import Dassh.Discovery (discoverSshSessions)
 import Dassh.Ebpf (cleanupEbpf, initEbpf, startPollingThread, trackPid)
-import Dassh.Types (AppState (..), DasshEvent (..), SshSession (..))
+import Dassh.Types (AppState (..), DasshEvent (..), SshSession (..), zipperFromList)
 
 -- | CLI Configuration options
 newtype AppConfig = AppConfig
@@ -87,8 +87,7 @@ ensureRootPrivileges = do
 buildInitialState :: [SshSession] -> AppState
 buildInitialState sessions =
     AppState
-        { appSessions = sessions
-        , appSelectedIdx = 0
+        { appSessions = zipperFromList sessions
         , appExpanded = False
         }
 
@@ -106,9 +105,9 @@ main = do
     activeSessions <- discoverSshSessions
     let state = buildInitialState activeSessions
 
-    putStrLn $ "[INFO] Discovered " ++ show (length (appSessions state)) ++ " active SSH session(s)."
+    putStrLn $ "[INFO] Discovered " ++ show (length activeSessions) ++ " active SSH session(s)."
     when (verbose config) $
-        mapM_ (putStrLn . ("       - " ++) . show) (appSessions state)
+        mapM_ (putStrLn . ("       - " ++) . show) activeSessions
 
     -- Trigger Global eBPF Load & Attach UI
     putStrLn "[INFO] Loading eBPF program into kernel..."

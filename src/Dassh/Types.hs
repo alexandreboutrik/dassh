@@ -38,6 +38,13 @@ module Dassh.Types (
     AppState (..),
     EbpfEvent (..),
     DasshEvent (..),
+
+    -- * Zipper State
+    Zipper (..),
+    zipperFromList,
+    zipperToList,
+    zipperNext,
+    zipperMap,
 ) where
 
 import Data.ByteString (ByteString)
@@ -81,13 +88,12 @@ data SshSession = SshSession
 
 {- |
 The core application state managed by the Brick UI event loop.
-It tracks all active sessions and manages viewport interactions.
+It tracks all active sessions using a safe Zipper, guaranteeing O(1)
+access to the focused pane without out-of-bounds index exceptions.
 -}
 data AppState = AppState
-    { appSessions :: ![SshSession]
-    -- ^ List of all currently active and monitored SSH sessions.
-    , appSelectedIdx :: !Int
-    -- ^ Index of the currently focused pane
+    { appSessions :: !(Maybe (Zipper SshSession))
+    -- ^ Safe Zipper of all currently monitored SSH sessions.
     , appExpanded :: !Bool
     {- ^ A flag indicating whether the selected session is expanded
     into the full-screen view.
@@ -149,3 +155,47 @@ instance Storable EbpfEvent where
     -- This application is a consumer of eBPF events.
     -- We never write structs back into the ring buffer.
     poke _ _ = error "poke is not implemented for EbpfEvent (Read-only)"
+
+-- --------------------------
+-- Zipper Implementation
+-- --------------------------
+
+{- |
+A simple List Zipper for safely tracking the currently focused element.
+Guarantees O(1) access to the focused element, preventing out-of-bounds
+exceptions associated with raw list indices.
+-}
+data Zipper a = Zipper
+    { zPrev :: ![a]
+    -- ^ Elements before the focus (stored in reverse order)
+    , zFocus :: !a
+    -- ^ The currently focused element
+    , zNext :: ![a]
+    -- ^ Elements after the focus
+    }
+    deriving (Show, Eq)
+
+-- | Safely constructs a Zipper from a standard list.
+zipperFromList :: [a] -> Maybe (Zipper a)
+zipperFromList [] = Nothing
+zipperFromList (x : xs) = Just (Zipper [] x xs)
+
+{- | Flattens a Zipper back into a standard list, maintaining
+ - original order.
+-}
+zipperToList :: Zipper a -> [a]
+zipperToList (Zipper p f n) = reverse p ++ [f] ++ n
+
+{- | Moves focus to the next element, wrapping around at the end
+ - cleanly (KISS).
+-}
+zipperNext :: Zipper a -> Zipper a
+zipperNext z@(Zipper p f []) =
+    case reverse (f : p) of
+        (h : t) -> Zipper [] h t
+        [] -> z -- Fallback, theoretically unreachable
+zipperNext (Zipper p f (n : ns)) = Zipper (f : p) n ns
+
+-- | Applies a function to all elements within the Zipper.
+zipperMap :: (a -> a) -> Zipper a -> Zipper a
+zipperMap g (Zipper p f n) = Zipper (map g p) (g f) (map g n)

@@ -41,7 +41,7 @@ import Brick.Widgets.Center
 import Data.ByteString.Char8 qualified as BC
 import Graphics.Vty qualified as V
 
-import Dassh.Types (AppState (..), SshSession (..))
+import Dassh.Types (AppState (..), SshSession (..), Zipper (..))
 
 selectedAttr, unselectedAttr, titleAttr :: AttrName
 selectedAttr = attrName "selected"
@@ -65,19 +65,21 @@ dasshAttrMap =
 The integer type parameter represents the resource name for viewports.
 -}
 drawUI :: AppState -> [Widget Int]
-drawUI state
-    | null (appSessions state) = [center $ str "No active SSH sessions discovered."]
-    | appExpanded state = [drawExpanded (appSessions state !! appSelectedIdx state)]
-    | otherwise = [drawGrid state]
+drawUI state = case appSessions state of
+    Nothing -> [center $ str "No active SSH sessions discovered."]
+    Just z
+        | appExpanded state -> [drawExpanded (zFocus z)]
+        | otherwise -> [drawGrid z]
 
 {- | Draws a vertical grid containing all actively monitored sessions.
 Applies the global border style and standard dashboard title.
 -}
-drawGrid :: AppState -> Widget Int
-drawGrid state =
-    let sessions = appSessions state
-        selected = appSelectedIdx state
-        widgets = zipWith (drawPane selected) [0 ..] sessions
+drawGrid :: Zipper SshSession -> Widget Int
+drawGrid z =
+    let widgets =
+            map (drawPane False) (reverse $ zPrev z)
+                ++ [drawPane True (zFocus z)]
+                ++ map (drawPane False) (zNext z)
      in withBorderStyle unicode $
             borderWithLabel (withAttr titleAttr $ str " dassh - Active Sessions ") $
                 vBox widgets
@@ -85,16 +87,17 @@ drawGrid state =
 {- | Draws an individual preview pane for a specific session.
 It dynamically alters its border style and color based on focus state.
 -}
-drawPane :: Int -> Int -> SshSession -> Widget Int
-drawPane selectedIdx currentIdx session =
-    let isSelected = selectedIdx == currentIdx
+drawPane :: Bool -> SshSession -> Widget Int
+drawPane isSelected session =
+    let
         -- Unpack the ByteString TTY specifically for UI String rendering
         title = " PID: " ++ show (sessionPid session) ++ " (" ++ BC.unpack (sessionTty session) ++ ") "
 
         -- Determine visual distinction based on focus
         bStyle = if isSelected then unicodeBold else unicode
         paneAttr = if isSelected then selectedAttr else unselectedAttr
-     in withAttr paneAttr $
+     in
+        withAttr paneAttr $
             withBorderStyle bStyle $
                 borderWithLabel (withAttr titleAttr $ str title) $
                     -- `padRight Max` acts as a greedy layout constraint.
