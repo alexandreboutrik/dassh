@@ -59,6 +59,16 @@ struct {
 } events SEC(".maps");
 
 /*
+ * Represents the memory layout of the kernel's native 'iovec' structure.
+ * Utilized to safely boundary-check and extract memory pointers from
+ * vectorized I/O payloads passed by user-space applications.
+ */
+struct user_iovec {
+	const char *iov_base;
+	unsigned long iov_len;
+};
+
+/*
  * A Hash Map populated initially by Haskell with the root SSH Bash PIDs.
  * It is dynamically maintained by the kernel (via fork/exit tracepoints)
  * to track all child processes spawned within those monitored sessions.
@@ -185,6 +195,102 @@ int handle_sys_enter_write(struct trace_event_raw_sys_enter *ctx) {
 
 	// Submit the populated struct to user-space
 	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+
+/*
+ * Secondary terminal capture hook targeting vectorized writes (writev).
+ *
+ * Modernized terminal applications (e.g., Neovim, Tmux) and asynchronous
+ * runtimes (e.g., Node.js via libuv) bypass standard 'write' syscalls.
+ * They utilize 'writev' to flush multiple UI rendering buffers to the
+ * pseudo-terminal (PTY) in a single, zero-copy kernel context switch.
+ */
+SEC("tracepoint/syscalls/sys_enter_writev")
+int handle_sys_enter_writev(struct trace_event_raw_sys_enter *ctx) {
+	__u64 id = bpf_get_current_pid_tgid();
+	__u32 pid = id >> 32;
+
+	__u32 *root_pid = bpf_map_lookup_elem(&monitored_pids, &pid);
+	if (!root_pid) {
+		return 0;
+	}
+
+	int fd = ctx->args[0];
+
+	/*
+	 * Note: We explicitly do NOT filter by standard file descriptors
+	 * (fd == 1 || fd == 2) here. Advanced TUI applications open the
+	 * assigned TTY device directly (e.g., fd 19) to assert raw control
+	 * over terminal emulation, bypassing stdout/stderr entirely.
+	 */
+
+	if (*root_pid != pid) {
+		char comm[16];
+		bpf_get_current_comm(&comm, sizeof(comm));
+		// Still drop bash internal pipe noise
+		if (comm[0] == 'b' && comm[1] == 'a' && comm[2] == 's' &&
+			comm[3] == 'h' && comm[4] == '\0') {
+			return 0;
+		}
+	}
+
+	const struct user_iovec *iov = (const struct user_iovec *)ctx->args[1];
+	unsigned long iovcnt = ctx->args[2];
+
+	if (iovcnt == 0)
+		return 0;
+
+	struct user_iovec vec;
+
+	/*
+	 * Vector Array Traversal & Emisson:
+	 * Optimized runtimes frequently fragment sequences (e.g., placing
+	 * an empty string in iov[0] and the ANSI payload in iov[1]).
+	 *
+	 * Rather than performing unsafe pointer arithmetic to concatenate these
+	 * vectors in kernel-space—which triggers eBPF verifier rejections due
+	 * to unprovable memory bounds - we iterate through the array and emit
+	 * each valid vector as a discrete ring buffer event. The user-space
+	 * Haskell daemon handles the reassembly seamlessly.
+	 */
+#pragma unroll
+	for (int i = 0; i < 4; i++) {
+		if (i >= iovcnt)
+			break;
+
+		// Safely probe the user-space iovec array index
+		if (bpf_probe_read_user(&vec, sizeof(vec), &iov[i]) == 0) {
+			unsigned long chunk_len = vec.iov_len;
+
+			if (chunk_len > 0) {
+				// Bound the read to our maximum fixed payload capacity
+				if (chunk_len > PAYLOAD_SIZE - 1) {
+					chunk_len = PAYLOAD_SIZE - 1;
+				}
+
+				// The kernel's static eBPF verifier requires mathematical
+				// proof that 'chunk_len' cannot exceed 255 before invoking
+				// bpf_probe_read_user. A bitwise AND securely enforces
+				// this boundary constraint.
+				chunk_len &= 0xFF;
+
+				struct ebpf_event *e =
+					bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+				if (e) {
+					e->root_pid = *root_pid;
+					e->actual_pid = pid;
+					e->fd = fd;
+
+					bpf_probe_read_user(e->payload, chunk_len, vec.iov_base);
+					e->payload[chunk_len] = '\0';
+
+					bpf_ringbuf_submit(e, 0);
+				}
+			}
+		}
+	}
+
 	return 0;
 }
 

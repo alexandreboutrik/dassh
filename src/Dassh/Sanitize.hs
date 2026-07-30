@@ -89,8 +89,14 @@ pattern CharC = 67
 pattern CharD :: Word8
 pattern CharD = 68
 
+pattern CharH :: Word8
+pattern CharH = 104
+
 pattern CharK :: Word8
 pattern CharK = 75
+
+pattern CharL :: Word8
+pattern CharL = 108
 
 pattern CharP :: Word8
 pattern CharP = 80
@@ -130,13 +136,40 @@ pattern Utf8ContStart = 128
 pattern Utf8ContEnd :: Word8
 pattern Utf8ContEnd = 191
 
-{- | Takes a raw payload from the C struct and drops unsupported/dangerous
-ANSI escape sequences before packing it back into a strict ByteString.
-We unpack the strict ByteString into a list here to leverage Haskell's
-powerful list pattern matching for the ANSI state machine.
+-- | Additional ASCII characters for TUI detection
+pattern CharQuestionMark :: Word8
+pattern CharQuestionMark = 63
+
+pattern CharSemicolon :: Word8
+pattern CharSemicolon = 59
+
+pattern CharUnderscore :: Word8
+pattern CharUnderscore = 95
+
+pattern CharCaret :: Word8
+pattern CharCaret = 94
+
+{- |
+Core sanitization pipeline. Transforms a raw C-struct byte stream into
+a safe, UI-ready ByteString while dropping dangerous ANSI sequences.
+
+Because the kernel eBPF ring buffer chunks data into fixed 256-byte blocks,
+long ANSI sequences (like DCS capability queries) may be arbitrarily severed.
+This function relies on a chunk-agnostic, "starvable" state machine. It
+threads a staging buffer recursively, pausing execution and holding
+incomplete sequences in memory until the kernel delivers the
+remaining fragments.
+
+Returns: (IsTuiModeActive, LeftoverAnsiFragments, SafeRenderableData).
 -}
-sanitizePayload :: ByteString -> ByteString
-sanitizePayload = BS.pack . stripAnsi . BS.unpack
+sanitizePayload :: Bool -> ByteString -> ByteString -> (Bool, ByteString, ByteString)
+sanitizePayload tuiMode staging bs =
+    let cleanBs = fst (BS.break (== AsciiNull) bs)
+        combined = BS.append staging cleanBs
+        -- Protect against infinite growth if sequence terminator is missing
+        boundedCombined = if BS.length combined > 4096 then BS.drop (BS.length combined - 4096) combined else combined
+        (finalTui, safeChars, leftover) = stripAnsi tuiMode (BS.unpack boundedCombined)
+     in (finalTui, BS.pack leftover, BS.pack safeChars)
 
 {- | Heuristic filter to identify and drop internal Bash tab-completion
  - pipe garbage.
@@ -153,9 +186,7 @@ isCompletionGarbage bs =
  - existing buffer.
 Instead of a complex 2D array, this function simulates terminal behavior
 on a 1D ByteString by maintaining a 'cursor offset' from the end of the
-string. It supports non-destructive leftward navigation, character
-overwriting, and clearing lines, returning the updated buffer and the
-new cursor position.
+string.
 -}
 applyTerminalState :: ByteString -> Int -> ByteString -> (ByteString, Int)
 applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack newBytes)
@@ -238,62 +269,106 @@ applyTerminalState oldBuf oldOffset newBytes = go oldBuf oldOffset (BS.unpack ne
                         else o
              in go b (skipCont (off - 1)) xs
 
--- | Extracts the <n> multiplier from ANSI sequences (e.g. \ESC[3D -> 3)
-parseAnsiParam :: [Word8] -> (Int, [Word8])
-parseAnsiParam xs = parse 0 xs
+{- | Extracts all semicolon-separated numeric parameters from the CSI body.
+Ignores non-numeric characters to prevent formatting failures.
+-}
+parseCsiParams :: [Word8] -> [Int]
+parseCsiParams = go [] 0 False
   where
-    parse acc (d : ds) | d >= CharZero && d <= CharNine = parse (acc * 10 + fromIntegral (d - CharZero)) ds
-    parse acc ds = (max 1 acc, ds)
+    go acc cur has [] = reverse (if has then cur : acc else acc)
+    go acc cur has (d : ds)
+        | d >= CharZero && d <= CharNine = go acc (cur * 10 + fromIntegral (d - CharZero)) True ds
+        | d == CharSemicolon = go (if has then cur : acc else acc) 0 False ds
+        | otherwise = go acc cur has ds -- Ignore any other invalid
+        -- characters like spaces
 
-{- | A pure, recursive state machine that processes the incoming
- - byte stream.
-It filters out dangerous or unprintable control characters, translates
-specific supported ANSI escape codes (like Clear to End of Line) into
-safe internal byte representations (e.g., byte 11), and completely
-strips the remaining unsupported ANSI sequences to prevent
-terminal corruption.
+{- |
+A pure, recursive 1D state machine.
+It isolates safe control characters for terminal emulation while stripping
+unsupported ANSI escape codes to prevent Brick UI corruption.
+
+If 'tuiMode' is true, it operates in a strict O(1) drop-mode, discarding
+standard characters at the parser root to prevent Alternative Screen UI
+elements from leaking into the dashboard's scrollback buffers.
 -}
-stripAnsi :: [Word8] -> [Word8]
-stripAnsi [] = []
--- Stop processing as soon as we hit the C-string null terminator.
-stripAnsi (AsciiNull : _) = []
--- Detect OSC (Operating System Command) sequence
-stripAnsi (AsciiEsc : AsciiBracketRight : xs) = stripAnsi (dropOscBody xs)
-stripAnsi (AsciiEsc : AsciiBracketLeft : xs) =
-    let (n, rest) = parseAnsiParam xs
-     in case rest of
-            (CharC : ys) -> replicate n InternalCursorRight ++ stripAnsi ys -- \ESC[<n>C (Right)
-            (CharD : ys) -> replicate n InternalCursorLeft ++ stripAnsi ys -- \ESC[<n>D (Left)
-            (CharP : ys) -> replicate n InternalDeleteChar ++ stripAnsi ys -- \ESC[<n>P (Delete)
-            (CharAt : ys) -> replicate n InternalInsertSpace ++ stripAnsi ys -- \ESC[<n>@ (Insert)
-            (CharK : ys) -> InternalClearEol : stripAnsi ys -- \ESC[<n>K (Clear EOL)
-            _ -> stripAnsi (dropAnsiBody xs)
--- Catch isolated ESC bytes that might break rendering
-stripAnsi (AsciiEsc : xs) = stripAnsi xs
+stripAnsi :: Bool -> [Word8] -> (Bool, [Word8], [Word8])
+stripAnsi tui [] = (tui, [], [])
+-- Detect Terminal Strings: OSC (]), DCS (P), APC (_), PM (^) and drop them
+stripAnsi tui (AsciiEsc : AsciiBracketRight : xs) = dropStringBody tui xs
+stripAnsi tui (AsciiEsc : CharP : xs) = dropStringBody tui xs
+stripAnsi tui (AsciiEsc : CharUnderscore : xs) = dropStringBody tui xs
+stripAnsi tui (AsciiEsc : CharCaret : xs) = dropStringBody tui xs
+-- Detect CSI (Control Sequence Introducer)
+stripAnsi tui orig@(AsciiEsc : AsciiBracketLeft : xs) = parseCsi tui orig xs
+-- Detect standard ESC sequences (Catch-all for \ESC > or \ESC ( B)
+stripAnsi tui orig@(AsciiEsc : xs) = parseEsc tui orig xs
 -- Standard character processing
-stripAnsi (x : xs)
-    | isSafePrintable x = x : stripAnsi xs
-    | otherwise = stripAnsi xs
+stripAnsi tui (x : xs)
+    | isSafePrintable x =
+        let (fTui, safe, left) = stripAnsi tui xs
+         in -- Discard printable characters instantly if a TUI is active
+            (fTui, if tui then safe else x : safe, left)
+    | otherwise = stripAnsi tui xs
 
-{- | Consumes bytes inside an OSC (title) sequence until the terminator
- - is found.
+{- | Consumes bytes inside a string sequence (OSC, DCS, etc.) until
+ - the terminator is found. Uses dummy headers to cap memory at O(1).
 -}
-dropOscBody :: [Word8] -> [Word8]
-dropOscBody [] = []
-dropOscBody (AsciiBel : xs) = xs -- BEL terminator
-dropOscBody (AsciiEsc : AsciiBackslash : xs) = xs -- ESC \ terminator
-dropOscBody (_ : xs) = dropOscBody xs
+dropStringBody :: Bool -> [Word8] -> (Bool, [Word8], [Word8])
+dropStringBody tui [] = (tui, [], [AsciiEsc, CharP])
+dropStringBody tui (AsciiBel : xs) = stripAnsi tui xs
+dropStringBody tui (AsciiEsc : AsciiBackslash : xs) = stripAnsi tui xs
+dropStringBody tui (AsciiEsc : []) = (tui, [], [AsciiEsc, CharP, AsciiEsc]) -- Starved on ESC
+dropStringBody tui (_ : xs) = dropStringBody tui xs
 
-{- | Consumes bytes inside an ANSI escape sequence until the terminator
-is found. Standard ANSI sequences end with an ASCII byte in the range
-64 to 126 ('@' to '~').
+{- | Parses CSI sequences and translates supported commands.
+Returns leftovers if the sequence is incomplete.
 -}
-dropAnsiBody :: [Word8] -> [Word8]
-dropAnsiBody [] = []
-dropAnsiBody (0 : _) = []
-dropAnsiBody (x : xs)
-    | x >= 64 && x <= 126 = xs -- Sequence terminator found, resume normal parsing
-    | otherwise = dropAnsiBody xs -- Still inside sequence, keep dropping
+parseCsi :: Bool -> [Word8] -> [Word8] -> (Bool, [Word8], [Word8])
+parseCsi tui original xs =
+    let (body, rest) = break (\x -> x >= CharAt && x <= AsciiTilde) xs
+     in case rest of
+            [] -> (tui, [], original) -- Starved
+            (term : fullRest) ->
+                let (isPrivate, pBody) = case body of
+                        (CharQuestionMark : ys) -> (True, ys)
+                        _ -> (False, body)
+                    params = parseCsiParams pBody
+                    n = case params of [] -> 1; (p : _) -> max 1 p
+                    isTuiMode p = p `elem` [47, 1047, 1049]
+                 in case term of
+                        CharH | any isTuiMode params -> stripAnsi True fullRest
+                        CharL | any isTuiMode params -> stripAnsi False fullRest
+                        CharC
+                            | not isPrivate ->
+                                let (fTui, safe, left) = stripAnsi tui fullRest
+                                 in (fTui, if tui then safe else replicate n InternalCursorRight ++ safe, left)
+                        CharD
+                            | not isPrivate ->
+                                let (fTui, safe, left) = stripAnsi tui fullRest
+                                 in (fTui, if tui then safe else replicate n InternalCursorLeft ++ safe, left)
+                        CharP
+                            | not isPrivate ->
+                                let (fTui, safe, left) = stripAnsi tui fullRest
+                                 in (fTui, if tui then safe else replicate n InternalDeleteChar ++ safe, left)
+                        CharAt
+                            | not isPrivate ->
+                                let (fTui, safe, left) = stripAnsi tui fullRest
+                                 in (fTui, if tui then safe else replicate n InternalInsertSpace ++ safe, left)
+                        CharK
+                            | not isPrivate ->
+                                let (fTui, safe, left) = stripAnsi tui fullRest
+                                 in (fTui, if tui then safe else InternalClearEol : safe, left)
+                        _ -> stripAnsi tui fullRest
+
+{- | Parses and drops standard ESC sequences (like character set selections).
+Returns leftovers if the sequence is incomplete.
+-}
+parseEsc :: Bool -> [Word8] -> [Word8] -> (Bool, [Word8], [Word8])
+parseEsc tui original [] = (tui, [], original)
+parseEsc tui original (x : xs)
+    | x >= 48 && x <= 126 = stripAnsi tui xs -- Sequence complete, drop it.
+    | x >= 32 && x <= 47 = parseEsc tui (original ++ [x]) xs -- Intermediate byte
+    | otherwise = stripAnsi tui xs -- Invalid, abort dropping
 
 {- | Determines if a byte is safe to pass to the Brick UI state machine.
 Allows standard ASCII printables, UTF-8 extended bytes, and specific

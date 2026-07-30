@@ -103,12 +103,17 @@ drawPane selectedIdx currentIdx session =
                     -- staggering borders.
                     padAll 1 $
                         padRight Max $
-                            let cleanText = BC.unpack $ sessionBuffer session
-                                preview = unlines . reverse . take 6 . reverse . lines $ cleanText
-                             in str preview
+                            if sessionInTuiMode session
+                                then center $ str "[ Interactive TUI Active - Output Paused ]"
+                                else
+                                    let cleanText = BC.unpack $ sessionBuffer session
+                                        preview = unlines . reverse . take 6 . reverse . lines $ cleanText
+                                     in str preview
 
 {- | Draws the selected session in full-screen with a scrollable viewport.
 Forces the viewport to occupy 100% of both horizontal and vertical space.
+Bypasses the viewport entirely if the session is in TUI mode to prevent
+greedy widget (center) layout crashes in Brick.
 -}
 drawExpanded :: SshSession -> Widget Int
 drawExpanded session =
@@ -118,9 +123,14 @@ drawExpanded session =
      in withAttr selectedAttr $
             withBorderStyle unicodeBold $
                 borderWithLabel (withAttr titleAttr $ str title) $
-                    -- Constrain the viewport on Both axes, and use greedy
-                    -- padding (Max) on the content to push the borders
-                    -- to the absolute edges of the terminal.
-                    viewport (sessionPid session) Both $
-                        padAll 1 $
-                            str cleanText
+                    if sessionInTuiMode session
+                        -- Render directly without a viewport if output is paused
+                        then center $ str "[ Interactive TUI Active - Output Paused ]"
+                        else
+                            -- Constrain the viewport on Both axes, and use
+                            -- greedy padding (Max) on the content to push
+                            -- the borders to the absolute edges of
+                            -- the terminal.
+                            viewport (sessionPid session) Both $
+                                padAll 1 $
+                                    str cleanText

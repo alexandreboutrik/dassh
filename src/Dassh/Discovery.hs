@@ -80,28 +80,43 @@ that die during the read operation.
 -}
 checkPidForSsh :: Int -> IO (Maybe SshSession)
 checkPidForSsh pid = do
-    let envFile = "/proc" </> show pid </> "environ"
+    let commFile = "/proc" </> show pid </> "comm"
 
     -- We use 'try' to catch IOExceptions. Even as root, kernel threads or
     -- rapidly exiting processes will throw permission or EOF errors here.
-    result <- try (BC.readFile envFile) :: IO (Either IOException ByteString)
+    commResult <- try (BC.readFile commFile) :: IO (Either IOException ByteString)
 
-    case result of
+    case commResult of
         Left _ -> return Nothing
-        Right envData ->
-            case extractSshTty envData of
-                Nothing -> return Nothing
-                Just tty ->
-                    return $
-                        Just
-                            SshSession
-                                { sessionPid = pid
-                                , sessionTty = tty
-                                , sessionBuffer = BC.empty
-                                , sessionCursor = 0
-                                , sessionStaging = BC.empty
-                                -- for the UI
-                                }
+        Right commData -> do
+            let comm = BC.strip commData
+            -- Only discover standard shells as root SSH sessions.
+            -- This prevents child tools (like Nvim LSP servers) from
+            -- being falsely identified as new logins.
+            if comm `notElem` [BC.pack "bash", BC.pack "zsh", BC.pack "ash", BC.pack "sh", BC.pack "mksh", BC.pack "ksh"]
+                then return Nothing
+                else do
+                    let envFile = "/proc" </> show pid </> "environ"
+                    result <- try (BC.readFile envFile) :: IO (Either IOException ByteString)
+
+                    case result of
+                        Left _ -> return Nothing
+                        Right envData ->
+                            case extractSshTty envData of
+                                Nothing -> return Nothing
+                                Just tty ->
+                                    return $
+                                        Just
+                                            SshSession
+                                                { sessionPid = pid
+                                                , sessionTty = tty
+                                                , sessionBuffer = BC.empty
+                                                , sessionCursor = 0
+                                                , sessionStaging = BC.empty
+                                                , sessionInTuiMode = False
+                                                , sessionAnsiStaging = BC.empty
+                                                -- for the UI
+                                                }
 
 {- |
 Pure function to parse the raw, binary /proc/<pid>/environ file.

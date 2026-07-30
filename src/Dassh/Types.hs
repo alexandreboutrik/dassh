@@ -68,6 +68,14 @@ data SshSession = SshSession
     {- ^ Line-buffered staging area to safely filter stdout pipes without
     chunk fragmentation
     -}
+    , sessionInTuiMode :: !Bool
+    {- ^ Flag indicating if the session has entered an Alternate Screen
+    Buffer (e.g., vim, tmux).
+    -}
+    , sessionAnsiStaging :: !ByteString
+    {- ^ Holds fragmented ANSI escape sequences across eBPF chunks
+    to prevent state machine corruption.
+    -}
     }
     deriving (Show, Eq)
 

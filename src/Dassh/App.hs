@@ -148,23 +148,28 @@ updateSessionBuffer :: EbpfEvent -> AppState -> AppState
 updateSessionBuffer event state =
     let targetRootPid = fromIntegral (eventRootPid event)
         isRootBashFd1 = (eventActualPid event == eventRootPid event) && (eventFd event == 1)
-        safeData = sanitizePayload (eventPayload event)
 
         updateSession s
-            -- Guard clause: ignore if this session isn't the target or
-            -- if data is empty
-            | sessionPid s /= targetRootPid || BS.null safeData = s
+            -- Guard clause: ignore if this session isn't the target
+            | sessionPid s /= targetRootPid = s
             | otherwise =
-                let (dataToRender, newStaging) =
+                let (newTuiMode, newAntiStaging, safeData) = sanitizePayload (sessionInTuiMode s) (sessionAnsiStaging s) (eventPayload event)
+
+                    (dataToRender, newStaging) =
                         if isRootBashFd1
                             then processLineBufferedOutput (sessionStaging s) safeData
                             else (safeData, sessionStaging s)
 
-                    (newBuf, newCursor) = applyTerminalState (sessionBuffer s) (sessionCursor s) dataToRender
+                    (newBuf, newCursor) =
+                        if BS.null dataToRender
+                            then (sessionBuffer s, sessionCursor s)
+                            else applyTerminalState (sessionBuffer s) (sessionCursor s) dataToRender
                  in s
                         { sessionBuffer = trimBuffer newBuf
                         , sessionCursor = newCursor
                         , sessionStaging = newStaging
+                        , sessionInTuiMode = newTuiMode
+                        , sessionAnsiStaging = newAntiStaging
                         }
      in state {appSessions = map updateSession (appSessions state)}
 

@@ -55,6 +55,16 @@ Press `Tab` to move focus between session windows.
 Press `Enter` on a selected session to expand it into a full-screen detail view with scrollback of all captured lines.  
 Press `q` to exit.
 
+## Limitations
+
+To maintain zero-overhead performance and a simple architecture (KISS), `dassh` handles terminal output as a 1D byte stream instead of a 2D grid. Because complex escape sequences from full-screen applications (like Vim or Tmux) would irreversibly corrupt this buffer, they are not natively mirrored. Instead, `dassh` automatically detects when an interactive application starts, safely pauses the output, and displays a placeholder message.
+
+```
+[ Interactive TUI Active - Output Paused ]
+```
+
+A future release may or may not introduce a fully featured 2D virtual terminal emulator, enabling interactive applications to be mirrored directly inside the dashboard panes.
+
 ## Security
 
 If you discover a security vulnerability, please check out our [Security Policy](SECURITY.md) for more details. All security vulnerabilities will be promply addressed.
