@@ -88,7 +88,8 @@ It dynamically alters its border style and color based on focus state.
 drawPane :: Int -> Int -> SshSession -> Widget Int
 drawPane selectedIdx currentIdx session =
     let isSelected = selectedIdx == currentIdx
-        title = " PID: " ++ show (sessionPid session) ++ " (" ++ sessionTty session ++ ") "
+        -- Unpack the ByteString TTY specifically for UI String rendering
+        title = " PID: " ++ show (sessionPid session) ++ " (" ++ BC.unpack (sessionTty session) ++ ") "
 
         -- Determine visual distinction based on focus
         bStyle = if isSelected then unicodeBold else unicode
@@ -111,7 +112,8 @@ Forces the viewport to occupy 100% of both horizontal and vertical space.
 -}
 drawExpanded :: SshSession -> Widget Int
 drawExpanded session =
-    let title = " [EXPANDED] PID: " ++ show (sessionPid session) ++ " (" ++ sessionTty session ++ ") "
+    -- Unpack the ByteString TTY specifically for UI String rendering
+    let title = " [EXPANDED] PID: " ++ show (sessionPid session) ++ " (" ++ BC.unpack (sessionTty session) ++ ") "
         cleanText = BC.unpack $ sessionBuffer session
      in withAttr selectedAttr $
             withBorderStyle unicodeBold $

@@ -56,7 +56,7 @@ dashboard panes.
 data SshSession = SshSession
     { sessionPid :: !Int
     -- ^ Root Process ID of the SSH session shell.
-    , sessionTty :: !String
+    , sessionTty :: !ByteString
     -- ^ Assigned TTY device (e.g., "/dev/pts/1") extracted from /proc.
     , sessionBuffer :: !ByteString
     -- ^ Sanitized, safe-to-render terminal output.

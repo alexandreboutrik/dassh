@@ -109,7 +109,7 @@ The Linux kernel formats this file by separating environment variables
 with a null byte ('\0'). We split the ByteString on nulls to find the
 specific TTY string.
 -}
-extractSshTty :: ByteString -> Maybe String
+extractSshTty :: ByteString -> Maybe ByteString
 extractSshTty envData = do
     -- Split the binary environment block by null terminators
     let envVars = BC.split '\0' envData
@@ -118,6 +118,5 @@ extractSshTty envData = do
     -- Locate the exact variable declaration starting with "SSH_TTY="
     match <- find (BC.isPrefixOf prefix) envVars
 
-    -- Strip the prefix and convert the raw bytes back into a standard
-    -- Haskell String
-    return $ BC.unpack $ BC.drop (BC.length prefix) match
+    -- Strip the prefix and return the raw ByteString safely
+    return $ BC.drop (BC.length prefix) match
