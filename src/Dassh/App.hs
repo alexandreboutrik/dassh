@@ -37,6 +37,7 @@ module Dassh.App (dasshApp) where
 import Brick
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BC
+import Data.IntSet qualified as IS
 import Graphics.Vty qualified as V
 
 import Control.Monad (when)
@@ -185,13 +186,16 @@ syncSessions latest state =
     let currentList = maybe [] zipperToList (appSessions state)
         oldFocusedPid = fmap (sessionPid . zFocus) (appSessions state)
 
+        -- Create fast O(log N) lookup sets for PIDs
+        latestPids = IS.fromList $ map sessionPid latest
+        currentPids = IS.fromList $ map sessionPid currentList
+
         -- Keep current sessions (preserving their buffers) if they are
-        -- still active
-        stillActive = filter (\c -> any (\l -> sessionPid l == sessionPid c) latest) currentList
+        -- still present in the latest discovery poll
+        stillActive = filter (\c -> sessionPid c `IS.member` latestPids) currentList
 
         -- Find entirely new sessions that just logged in
-        isNew l = not $ any (\c -> sessionPid c == sessionPid l) currentList
-        newSessions = filter isNew latest
+        newSessions = filter (\l -> not (sessionPid l `IS.member` currentPids)) latest
 
         mergedList = stillActive ++ newSessions
 

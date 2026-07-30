@@ -31,6 +31,7 @@ library
                     , filepath
                     , vty
                     , vty-crossplatform
+                    , containers
     hs-source-dirs:   src
     default-language: GHC2021
 
