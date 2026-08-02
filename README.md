@@ -21,7 +21,7 @@ First clone the repository:
 git clone git@github.com:alexandreboutrik/dassh
 cd dassh
 
-# If using NixOS, load the shell first
+# If using NixOS, load the shell, otherwise ignore this step
 nix-shell
 ```
 

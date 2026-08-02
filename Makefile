@@ -18,7 +18,7 @@ define EXTRACT
 endef
 
 define EXTRACT_AND_PATCH
-	$(call EXTRACT)
+	$(call EXTRACT,$(1))
 	@echo "Patching ELF interpreter for standard Linux FHS..."
 	patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 ./dassh
 	patchelf --remove-rpath ./dassh
@@ -76,4 +76,4 @@ exec:
 
 clean:
 	cabal clean
-	rm -f $(BPF_OBJ) $(BPF_HEADER)
+	rm -f $(BPF_OBJ) $(BPF_HEADER) dassh
