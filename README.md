@@ -1,7 +1,7 @@
 # dassh
 
 ![Version](https://img.shields.io/github/v/tag/alexandreboutrik/dassh?label=Version&color=blue)
-<!--[CI](https://img.shields.io/github/actions/workflow/status/alexandreboutrik/dassh/tests.yml?label=CI&logo=github)-->
+![CI](https://img.shields.io/github/actions/workflow/status/alexandreboutrik/dassh/ci.yml?label=CI&logo=github)
 
 `dassh` is a live SSH monitoring dashboard that watches user commands and program output across multiple SSH sessions in a real-time terminal interface.
 
