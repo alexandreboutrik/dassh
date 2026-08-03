@@ -211,7 +211,29 @@ int handle_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
 		const char *buf = (const char *)PT_REGS_PARM2(&regs);
 		unsigned long count = PT_REGS_PARM3(&regs);
 
-		emit_event(*root_pid, pid, fd, buf, count);
+		/*
+		 * Chunked Write Traversal:
+		 * Large write() syscalls (like those from `cat`) must be
+		 * chunked to fit within the 255-byte payload limit. We loop
+		 * to process up to ~4KB (16 * 255 bytes) per syscall.
+		 */
+#pragma unroll
+		for (int i = 0; i < 16; i++) {
+			unsigned long offset = i * (PAYLOAD_SIZE - 1);
+
+			// If our offset has reached or exceeded the total count,
+			// we're done
+			if (offset >= count)
+				break;
+
+			// Calculate how many bytes are left to process
+			unsigned long remaining = count - offset;
+			unsigned long chunk =
+				(remaining > PAYLOAD_SIZE - 1) ? (PAYLOAD_SIZE - 1) : remaining;
+
+			// Emit the event using purely derived offsets
+			emit_event(*root_pid, pid, fd, buf + offset, chunk);
+		}
 
 		// Route 2: Vectorized sys_writev (Neovim, Tmux, Node.js)
 	} else if (syscall_id == SYS_WRITEV) {
