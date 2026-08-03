@@ -308,7 +308,7 @@ dropStringBody :: Bool -> [Word8] -> (Bool, [Word8], [Word8])
 dropStringBody tui [] = (tui, [], [AsciiEsc, CharP])
 dropStringBody tui (AsciiBel : xs) = stripAnsi tui xs
 dropStringBody tui (AsciiEsc : AsciiBackslash : xs) = stripAnsi tui xs
-dropStringBody tui (AsciiEsc : []) = (tui, [], [AsciiEsc, CharP, AsciiEsc]) -- Starved on ESC
+dropStringBody tui [AsciiEsc] = (tui, [], [AsciiEsc, CharP, AsciiEsc]) -- Starved on ESC
 dropStringBody tui (_ : xs) = dropStringBody tui xs
 
 {- | Parses CSI sequences and translates supported commands.
