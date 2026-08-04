@@ -156,13 +156,10 @@ updateSessionBuffer event state =
                     zeroCopyMsg = BC.pack "\n[ Zero-Copy Transfer Intercepted - Output Hidden ]\n\n"
                     isDuplicateZeroCopy = safeData == zeroCopyMsg && zeroCopyMsg `BS.isSuffixOf` sessionBuffer s
 
-                    (dataToRender, newStaging) =
-                        if isDuplicateZeroCopy
-                            then (BS.empty, sessionStaging s) -- Drop
-                            else
-                                if isRootBashFd1
-                                    then processLineBufferedOutput (sessionStaging s) safeData
-                                    else (safeData, sessionStaging s)
+                    (dataToRender, newStaging)
+                        | isDuplicateZeroCopy = (BS.empty, sessionStaging s) -- Drop
+                        | isRootBashFd1 = processLineBufferedOutput (sessionStaging s) safeData
+                        | otherwise = (safeData, sessionStaging s)
 
                     (newBuf, newCursor) =
                         if BS.null dataToRender
