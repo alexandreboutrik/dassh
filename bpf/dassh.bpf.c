@@ -202,6 +202,11 @@ int handle_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
 			comm[3] == 'h' && comm[4] == '\0') {
 			return 0;
 		}
+
+		// Block systemd/vte prompt hook utilities writing to background pipes
+		if (comm[0] == 's' && comm[1] == 'e' && comm[2] == 'd' &&
+			comm[3] == '\0')
+			return 0;
 	}
 
 	// Route 1: Standard sys_write
