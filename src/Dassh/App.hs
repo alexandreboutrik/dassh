@@ -149,10 +149,20 @@ updateSessionBuffer event state =
             | otherwise =
                 let (newTuiMode, newAntiStaging, safeData) = sanitizePayload (sessionInTuiMode s) (sessionAnsiStaging s) (eventPayload event)
 
+                    -- Deduplicate the zero-copy placeholder
+                    -- Since `cat` attempts a direct TTY splice (fails) then
+                    -- a pipe splice (succeeds), the eBPF hook capture both
+                    -- in rapid succession.
+                    zeroCopyMsg = BC.pack "\n[ Zero-Copy Transfer Intercepted - Output Hidden ]\n\n"
+                    isDuplicateZeroCopy = safeData == zeroCopyMsg && zeroCopyMsg `BS.isSuffixOf` sessionBuffer s
+
                     (dataToRender, newStaging) =
-                        if isRootBashFd1
-                            then processLineBufferedOutput (sessionStaging s) safeData
-                            else (safeData, sessionStaging s)
+                        if isDuplicateZeroCopy
+                            then (BS.empty, sessionStaging s) -- Drop
+                            else
+                                if isRootBashFd1
+                                    then processLineBufferedOutput (sessionStaging s) safeData
+                                    else (safeData, sessionStaging s)
 
                     (newBuf, newCursor) =
                         if BS.null dataToRender

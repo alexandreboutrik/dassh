@@ -28,14 +28,20 @@
 // x86_64 Syscall IDs
 #define SYS_WRITE 1
 #define SYS_WRITEV 20
+#define SYS_SPLICE 275
+#define SYS_SENDFILE64 40
 #elif defined(__TARGET_ARCH_arm64) || defined(__TARGET_ARCH_arm)
 // ARM64 Syscall IDs (AArch64)
 #define SYS_WRITE 64
 #define SYS_WRITEV 66
+#define SYS_SPLICE 76
+#define SYS_SENDFILE64 71
 #elif defined(__TARGET_ARCH_riscv)
 // RISC-V / asm-generic Syscall IDs
 #define SYS_WRITE 64
 #define SYS_WRITEV 66
+#define SYS_SPLICE 76
+#define SYS_SENDFILE64 71
 #else
 #error "Unsupported target architecture for syscall definitions."
 #endif

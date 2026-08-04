@@ -67,6 +67,14 @@ To maintain zero-overhead performance and a simple architecture (KISS), `dassh` 
 
 A future release may or may not introduce a fully featured 2D virtual terminal emulator, enabling interactive applications to be mirrored directly inside the dashboard panes.
 
+Futhermore, `dassh` cannot capture file contents transferred by some modern utilities (like Ubuntu Server's GNU `cat`) that utilize zero-copy system calls such as `splice` or `sendfile64`. These system calls move data directly between kernel buffers without exposing a user-space memory pointer that the eBPF tracepoints can read.
+
+Attempting to capture this data would require hooking deep into the VFS using unstable kernel probes `kprobes`, which would violate the current project's philosophy for Kernel ABI compatibility. So, `dassh` instead intercepts the zero-copy syscall attempt and injects a placeholder message.
+
+```
+[ Zero-Copy Transfer Intercepted - Output Hidden ]
+```
+
 ## Security
 
 If you discover a security vulnerability, please check out our [Security Policy](SECURITY.md) for more details. All security vulnerabilities will be promply addressed.

@@ -82,15 +82,6 @@ struct {
 } monitored_pids SEC(".maps");
 
 /*
- * BPF CO-RE (Compile Once - Run Everywhere) struct.
- * Allows us to dynamically extract PIDs from raw tracepoints
- * without needing the massive vmlinux.h header block.
- */
-struct task_struct {
-	int pid;
-} __attribute__((preserve_access_index));
-
-/*
  * Helper: Safely reads data from user-space memory into a newly reserved
  * ring buffer event. Enforces static boundary constraints to satisfy the
  * eBPF verifier.
@@ -126,6 +117,15 @@ static __always_inline void emit_event(__u32 root_pid, __u32 actual_pid, int fd,
 }
 
 /*
+ * BPF CO-RE (Compile Once - Run Everywhere) struct.
+ * We target 'tgid' (Thread Group ID), because in the Linux kernel, the TGID
+ * is what user-space applications recognize as the Process ID (PID).
+ */
+struct task_struct {
+	int tgid;
+} __attribute__((preserve_access_index));
+
+/*
  * Automatically tracks child processes spawned by monitored SSH sessions.
  * If a monitored parent forks, we map the new child PID back to the
  * root session.
@@ -135,7 +135,7 @@ int handle_fork(struct bpf_raw_tracepoint_args *ctx) {
 	struct task_struct *child = (struct task_struct *)ctx->args[1];
 
 	__u32 parent_pid = bpf_get_current_pid_tgid() >> 32;
-	__u32 child_pid = BPF_CORE_READ(child, pid);
+	__u32 child_pid = BPF_CORE_READ(child, tgid);
 
 	__u32 *root_pid = bpf_map_lookup_elem(&monitored_pids, &parent_pid);
 	if (root_pid) {
@@ -149,8 +149,8 @@ int handle_fork(struct bpf_raw_tracepoint_args *ctx) {
  */
 SEC("raw_tp/sched_process_exit")
 int handle_exit(struct bpf_raw_tracepoint_args *ctx) {
-	struct task_struct *p = (struct task_struct *)ctx->args[0];
-	__u32 pid = BPF_CORE_READ(p, pid);
+	__u32 pid = bpf_get_current_pid_tgid() >> 32;
+
 	bpf_map_delete_elem(&monitored_pids, &pid);
 	return 0;
 }
@@ -164,8 +164,9 @@ SEC("raw_tp/sys_enter")
 int handle_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
 	long syscall_id = ctx->args[1];
 
-	// Filter for architecture-specific write/writev syscalls
-	if (syscall_id != SYS_WRITE && syscall_id != SYS_WRITEV)
+	// Filter for architecture-specific write/writev and zero-copy syscalls
+	if (syscall_id != SYS_WRITE && syscall_id != SYS_WRITEV &&
+		syscall_id != SYS_SPLICE && syscall_id != SYS_SENDFILE64)
 		return 0;
 
 	// Extract Process ID
@@ -258,6 +259,49 @@ int handle_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
 			if (bpf_probe_read_user(&vec, sizeof(vec), &iov[i]) == 0) {
 				emit_event(*root_pid, pid, fd, vec.iov_base, vec.iov_len);
 			}
+		}
+
+		// Route 3: Zero-Copy System Calls (splice, sendfile64)
+	} else if (syscall_id == SYS_SPLICE || syscall_id == SYS_SENDFILE64) {
+		int out_fd;
+
+		// The target file descriptor is located at different arguments
+		// depending on the syscall.
+		// fd_out is the 3rd argument in splice and the 1st in sendfile
+		(syscall_id == SYS_SPLICE) ? (out_fd = PT_REGS_PARM3(&regs))
+								   : (out_fd = PT_REGS_PARM1(&regs));
+
+		// Only inject the placeholder if the data is actually being sent
+		// to stdout or stderr
+		if (out_fd != 1 && out_fd != 2)
+			return 0;
+
+		/*
+		 * Zero-copy transfers move data directly between kernel buffers
+		 * (e.g., from the disk page cache to the output pipe/TTY). There
+		 * is no user-space buffer to intercept via bpf_probe_read_user.
+		 * We emit a 1D placeholder to alert the dashboard user that an
+		 * unreadable file transfer occurred.
+		 */
+		const char placeholder[] =
+			"\n[ Zero-Copy Transfer Intercepted - Output Hidden ]\n\n";
+		unsigned long count = sizeof(placeholder) - 1;
+
+		struct ebpf_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+		if (e) {
+			e->root_pid = *root_pid;
+			e->actual_pid = pid;
+			e->fd = out_fd;
+
+			/*
+			 * Because 'placeholder' is allocated on the kernel's BPF stack,
+			 * we MUST use bpf_probe_read_kernel. bpf_probe_read_user will
+			 * fail and result in empty/null payloads.
+			 */
+			bpf_probe_read_kernel(e->payload, count, placeholder);
+			e->payload[count] = '\0';
+
+			bpf_ringbuf_submit(e, 0);
 		}
 	}
 
